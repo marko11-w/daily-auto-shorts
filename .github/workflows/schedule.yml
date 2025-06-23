@@ -2,8 +2,8 @@ name: Daily Auto Shorts
 
 on:
   schedule:
-    - cron: '0 9 * * *'  # كل يوم الساعة 9 صباحًا (UTC)
-  workflow_dispatch:      # لتشغيله يدويًا من GitHub
+    - cron: '0 9 * * *'  # كل يوم الساعة 9 صباحًا بتوقيت UTC
+  workflow_dispatch:     # يسمح بتشغيل الـ workflow يدويًا
 
 jobs:
   run-script:
@@ -16,14 +16,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'  # أو يمكنك استخدام '3.x' للإصدار الأحدث
+          python-version: '3.10'
 
       - name: Install dependencies
-  run: |
-    python -m pip install --upgrade pip
-    pip install moviepy
-    pip install requests
-    pip install google-api-python-client
-    pip install oauth2client
+        run: |
+          python -m pip install --upgrade pip
+          pip install moviepy
+          pip install requests
+          pip install google-api-python-client
+          pip install oauth2client
 
-
+      - name: Run the script
+        run: python main.py

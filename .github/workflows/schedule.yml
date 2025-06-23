@@ -26,5 +26,4 @@ jobs:
     pip install google-api-python-client
     pip install oauth2client
 
-      - name: Run the script
-        run: python main.py
+

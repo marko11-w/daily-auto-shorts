@@ -10,12 +10,21 @@ openai.api_key = OPENAI_API_KEY
 
 app = Flask(__name__)
 
-# عرض اسم البوت في السجل
+# ✅ طباعة معلومات البوت
 try:
-    print(f"🤖 BOT ACTIVE: {bot.get_me().username}")
+    bot_info = bot.get_me()
+    print(f"🤖 BOT IS RUNNING: @{bot_info.username} (ID: {bot_info.id})")
 except Exception as e:
-    print(f"❌ Error getting bot info: {e}")
+    print(f"❌ خطأ في get_me(): {e}")
 
+# ✅ طباعة Webhook الحالي
+try:
+    hook = bot.get_webhook_info()
+    print(f"🔗 Webhook الحالي: {hook.url}")
+except Exception as e:
+    print(f"❌ خطأ في get_webhook_info(): {e}")
+
+# ✅ تخزين تقدم المستخدمين
 USER_FILE = "user_progress.json"
 if not os.path.exists(USER_FILE):
     with open(USER_FILE, "w") as f:
@@ -40,8 +49,10 @@ def generate_lesson(n):
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = str(message.from_user.id)
-    data = load_progress()
+    username = message.from_user.username
+    print(f"📨 start من @{username} | ID: {user_id}")
 
+    data = load_progress()
     if user_id not in data:
         data[user_id] = 1
     else:
@@ -55,6 +66,7 @@ def start(message):
         bot.send_message(message.chat.id, f"📘 الدرس {lesson_number}:\n\n{lesson}")
         save_progress(data)
     except Exception as e:
+        print(f"❌ خطأ أثناء توليد الدرس: {e}")
         bot.send_message(message.chat.id, f"❌ حدث خطأ أثناء توليد الدرس:\n{str(e)}")
 
 @app.route("/", methods=["GET"])
@@ -63,16 +75,20 @@ def index():
 
 @app.route("/", methods=["POST"])
 def webhook():
-    update = telebot.types.Update.de_json(request.stream.read().decode("utf-8"))
-    bot.process_new_updates([update])
+    try:
+        update = telebot.types.Update.de_json(request.stream.read().decode("utf-8"))
+        print(f"📨 webhook update: {update.update_id}")
+        bot.process_new_updates([update])
+    except Exception as e:
+        print(f"❌ خطأ في webhook: {e}")
     return "ok", 200
 
-# تعيين Webhook بأمان
+# ✅ تعيين Webhook إذا كان موجود كمتغير بيئي
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 if WEBHOOK_URL:
     try:
         bot.remove_webhook()
         bot.set_webhook(url=WEBHOOK_URL)
-        print(f"✅ Webhook set to: {WEBHOOK_URL}")
+        print(f"✅ Webhook تم ضبطه على: {WEBHOOK_URL}")
     except Exception as e:
-        print(f"❌ Webhook Error: {e}")
+        print(f"❌ فشل ضبط Webhook: {e}")

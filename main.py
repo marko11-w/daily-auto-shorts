@@ -9,7 +9,12 @@ bot = telebot.TeleBot(BOT_TOKEN)
 openai.api_key = OPENAI_API_KEY
 
 app = Flask(__name__)
-print(f"🤖 BOT ACTIVE: {bot.get_me().username}")
+
+# عرض اسم البوت في السجل
+try:
+    print(f"🤖 BOT ACTIVE: {bot.get_me().username}")
+except Exception as e:
+    print(f"❌ Error getting bot info: {e}")
 
 USER_FILE = "user_progress.json"
 if not os.path.exists(USER_FILE):
@@ -62,7 +67,12 @@ def webhook():
     bot.process_new_updates([update])
     return "ok", 200
 
+# تعيين Webhook بأمان
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 if WEBHOOK_URL:
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)
+    try:
+        bot.remove_webhook()
+        bot.set_webhook(url=WEBHOOK_URL)
+        print(f"✅ Webhook set to: {WEBHOOK_URL}")
+    except Exception as e:
+        print(f"❌ Webhook Error: {e}")

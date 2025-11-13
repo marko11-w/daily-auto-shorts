@@ -131,11 +131,23 @@ def extract_video_url(url):
 # =============================
 def detect_platform(url):
     u = url.lower()
-    if "instagram" in u: return "Instagram"
-    if "tiktok" in u: return "TikTok"
-    if "facebook" in u or "fb.watch" in u: return "Facebook"
-    if "youtube" in u or "youtu.be" in u: return "YouTube"
-    if "pinterest" in u or "pin.it" in u: return "Pinterest"
+
+    # Instagram – أي رابط فيه كلمة instagram
+    if "instagram.com" in u:
+        return "Instagram"
+
+    if "tiktok" in u or "tt." in u:
+        return "TikTok"
+
+    if "facebook" in u or "fb.watch" in u:
+        return "Facebook"
+
+    if "youtube" in u or "youtu.be" in u:
+        return "YouTube"
+
+    if "pinterest" in u or "pin.it" in u:
+        return "Pinterest"
+
     return "Social"
 
 # =============================
@@ -209,7 +221,7 @@ def webhook(token):
         url = download_instagram(link)
         if url:
             inc_downloads()
-            send_video(token, chat_id, url, caption="تم التحميل من Instagram ✔️")
+            send_video(token, chat_id, url, caption="تم تحميل فيديو Instagram ✔️")
         else:
             send_message(token, chat_id, "❌ لم أستطع تحميل فيديو Instagram")
         return "ok"

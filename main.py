@@ -1,50 +1,43 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import os
+from flask import Flask, request, jsonify
+import requests
 import re
 import json
 import logging
 from pathlib import Path
-
-import requests
-from flask import Flask, request, jsonify
-
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-log = logging.getLogger("mark_downloader")
+import os
 
 app = Flask(__name__)
 
-# ========= الإعدادات =========
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").rstrip("/")
-PORT = int(os.getenv("PORT") or "8080")
-ADMIN_ID = 7758666677   # ← آيدي الأدمن الحقيقي
+# ---------------------------------------
+# إعدادات
+# ---------------------------------------
+ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
+PORT = int(os.getenv("PORT", "8080"))
 
-# ========= ملفات التخزين =========
 BASE = Path(".")
 USERS_FILE = BASE / "users.json"
 STATS_FILE = BASE / "stats.json"
 
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("downloader")
+
+# ---------------------------------------
+# ملفات التخزين
+# ---------------------------------------
 def ensure_files():
     if not USERS_FILE.exists():
         USERS_FILE.write_text("[]", encoding="utf-8")
     if not STATS_FILE.exists():
-        STATS_FILE.write_text(
-            json.dumps({"downloads": 0}, ensure_ascii=False, indent=2),
-            encoding="utf-8"
-        )
+        STATS_FILE.write_text(json.dumps({"downloads": 0}, indent=2), encoding="utf-8")
 
 def load_users():
     try:
-        return json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        return json.loads(USERS_FILE.read_text())
     except:
         return []
 
 def save_users(users):
-    USERS_FILE.write_text(json.dumps(users, ensure_ascii=False, indent=2), encoding="utf-8")
+    USERS_FILE.write_text(json.dumps(users, indent=2))
 
 def add_user(uid):
     users = load_users()
@@ -54,180 +47,167 @@ def add_user(uid):
 
 def load_stats():
     try:
-        return json.loads(STATS_FILE.read_text(encoding="utf-8"))
+        return json.loads(STATS_FILE.read_text())
     except:
         return {"downloads": 0}
 
-def save_stats(stats):
-    STATS_FILE.write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
-
 def inc_downloads():
-    stats = load_stats()
-    stats["downloads"] += 1
-    save_stats(stats)
+    st = load_stats()
+    st["downloads"] += 1
+    STATS_FILE.write_text(json.dumps(st, indent=2))
 
-# ========= دوال تلجرام =========
+
+# ---------------------------------------
+# Telegram API
+# ---------------------------------------
 def tg_api(token):
     return f"https://api.telegram.org/bot{token}"
 
-def send_message(token, chat_id, text):
-    requests.post(
-        f"{tg_api(token)}/sendMessage",
-        json={"chat_id": chat_id, "text": text},
-        timeout=10
-    )
+def send_msg(token, chat_id, text):
+    requests.post(f"{tg_api(token)}/sendMessage",
+                  json={"chat_id": chat_id, "text": text})
 
-def send_video(token, chat_id, url, caption=None):
-    data = {"chat_id": chat_id, "video": url}
-    if caption:
-        data["caption"] = caption
-    requests.post(f"{tg_api(token)}/sendVideo", json=data, timeout=20)
+def send_video(token, chat_id, url):
+    requests.post(f"{tg_api(token)}/sendVideo",
+                  json={"chat_id": chat_id, "video": url})
 
-# ========= API Instagram =========
-def download_instagram(url):
+
+# ---------------------------------------
+# استخراج الفيديو بأي طريقة
+# ---------------------------------------
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+def og_extract(url):
+    """استخراج og:video لأي منصة."""
     try:
-        api = "https://snapinsta.io/wp-json/aio-dl/video-data/"
-        res = requests.post(api, data={"url": url}, timeout=20).json()
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if not r.ok:
+            return None
 
-        if "medias" in res and res["medias"]:
-            return res["medias"][0]["src"]
-    except Exception as e:
-        log.error("Instagram API error: %s", e)
-
-    return None
-
-# ========= محاولة استخراج og:video لأي منصة =========
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 12_0 like Mac OS X)"
-}
-
-def extract_video_url(url):
-    try:
-        html = requests.get(url, headers=HEADERS, timeout=15).text
+        html = r.text
 
         patterns = [
             r'property="og:video"\s+content="([^"]+)"',
             r"property='og:video'\s+content='([^']+)'",
-            r'property="og:video:secure_url"\s+content="([^"]+)"'
+            r'"contentUrl":"([^"]+)"'
         ]
 
         for p in patterns:
-            match = re.search(p, html)
-            if match:
-                return match.group(1).replace("&amp;", "&")
-    except:
-        return None
+            m = re.search(p, html)
+            if m:
+                return m.group(1).replace("&amp;", "&")
+
+    except Exception as e:
+        log.error("OG Extract error: %s", e)
 
     return None
 
-# ========= تحديد المنصة =========
-def detect_platform(url):
-    lower = url.lower()
 
-    if "instagram.com" in lower:
-        return "Instagram"
-    if "tiktok" in lower or "tt." in lower:
-        return "TikTok"
-    if "facebook" in lower or "fb.watch" in lower:
-        return "Facebook"
-    if "youtube" in lower or "youtu.be" in lower:
-        return "YouTube"
-    if "pinterest" in lower or "pin.it" in lower:
-        return "Pinterest"
+def insta_api(url):
+    """مصدر بديل لإنستغرام"""
+    try:
+        api = "https://snapinsta.io/wp-json/aio-dl/video-data/"
+        r = requests.post(api, data={"url": url}, timeout=10)
+        js = r.json()
+        if "medias" in js:
+            return js["medias"][0]["src"]
+    except:
+        return None
 
-    return "Social"
 
-# ========= Webhook =========
+# ---------------------------------------
+# تحديد المنصة
+# ---------------------------------------
+def detect(url):
+    u = url.lower()
+    if "instagram" in u or "ig.me" in u:
+        return "instagram"
+    if "tiktok" in u or "tt." in u:
+        return "tiktok"
+    if "facebook" in u or "fb.watch" in u:
+        return "facebook"
+    if "youtube" in u or "youtu.be" in u:
+        return "youtube"
+    if "pinterest" in u or "pin.it" in u:
+        return "pinterest"
+    if "twitter" in u or "x.com" in u:
+        return "twitter"
+    if "threads.net" in u:
+        return "threads"
+    return "other"
+
+
+# ---------------------------------------
+# Webhook
+# ---------------------------------------
 @app.post("/webhook/<token>")
 def webhook(token):
     ensure_files()
-    update = request.get_json(silent=True) or {}
+    update = request.json or {}
 
-    msg = update.get("message") or update.get("edited_message")
+    msg = update.get("message")
     if not msg:
         return "ok"
-
+    
     chat_id = msg["chat"]["id"]
     text = msg.get("text", "")
-
     add_user(chat_id)
 
-    is_admin = (chat_id == ADMIN_ID)
-
-    # ===== أوامر الأدمن =====
-    if text.startswith("/start") and is_admin:
-        send_message(token, chat_id,
-            "👑 مرحباً أدمن مارك!\n"
-            "/stats — عرض الإحصائيات\n"
-            "/broadcast — إرسال جماعي\n\n"
-            "أرسل أي رابط فيديو للتحميل 🎬"
-        )
-        return "ok"
-
-    if text.startswith("/stats") and is_admin:
-        u = len(load_users())
-        d = load_stats()["downloads"]
-        send_message(token, chat_id, f"📊 الإحصائيات:\nالمستخدمون: {u}\nالتحميلات: {d}")
-        return "ok"
-
-    if text.startswith("/broadcast") and is_admin:
-        msg_text = text.replace("/broadcast", "").strip()
-        for uid in load_users():
-            send_message(token, uid, msg_text)
-        send_message(token, chat_id, "📢 تم الإرسال.")
-        return "ok"
-
-    # ===== المستخدم العادي =====
+    # أمر البدء
     if text.startswith("/start"):
-        send_message(
-            token, chat_id,
-            "📥 أرسل رابط فيديو من:\nInstagram / TikTok / Facebook / YouTube / Pinterest\nوسأقوم بتحميله لك 🎬"
-        )
+        send_msg(token, chat_id,
+                 "🎬 أرسل أي رابط فيديو من:\n"
+                 "Instagram / TikTok / Facebook / YouTube / Pinterest / Twitter / Threads\n"
+                 "وسأحمّله لك مباشرة 👌")
         return "ok"
 
-    urls = re.findall(r"(https?://\S+)", text)
-    if not urls:
+    # استخراج رابط
+    links = re.findall(r"(https?://\S+)", text)
+    if not links:
         return "ok"
 
-    link = urls[0]
-    platform = detect_platform(link)
+    url = links[0].rstrip(").,!?;")
 
-    send_message(token, chat_id, f"⏳ جاري المعالجة من {platform}...")
+    platform = detect(url)
+    send_msg(token, chat_id, f"⏳ جاري المعالجة ({platform})...")
 
     # Instagram
-    if platform == "Instagram":
-        url = download_instagram(link)
-        if url:
+    if platform == "instagram":
+        vid = insta_api(url) or og_extract(url)
+        if vid:
             inc_downloads()
-            send_video(token, chat_id, url, caption="✔️ Instagram Video")
+            send_video(token, chat_id, vid)
         else:
-            send_message(token, chat_id, "❌ فشل تحميل إنستغرام")
+            send_msg(token, chat_id, "❌ فشل التحميل من Instagram")
         return "ok"
 
-    # Other platforms
-    url = extract_video_url(link)
-    if url:
+    # All other platforms
+    vid = og_extract(url)
+    if vid:
         inc_downloads()
-        send_video(token, chat_id, url, caption=f"✔️ Downloaded from {platform}")
+        send_video(token, chat_id, vid)
     else:
-        send_message(token, chat_id, "❌ لم أستطع استخراج الفيديو!")
+        send_msg(token, chat_id, "❌ لم أستطع استخراج الفيديو!")
 
     return "ok"
 
-# ========= Set Webhook =========
-@app.get("/set_webhook/<token>")
-def set_webhook(token):
-    base = WEBHOOK_URL or f"https://{request.host}"
-    target = f"{base}/webhook/{token}"
 
-    requests.get(f"{tg_api(token)}/deleteWebhook")
-    r = requests.post(f"{tg_api(token)}/setWebhook", json={"url": target})
+# ---------------------------------------
+# ضبط Webhook
+# ---------------------------------------
+@app.get("/set/<token>")
+def set_hook(token):
+    me = request.host_url.strip("/")
+    target = f"{me}/webhook/{token}"
+    r = requests.get(f"https://api.telegram.org/bot{token}/setWebhook",
+                     params={"url": target})
+    return jsonify({"webhook": target, "telegram_reply": r.json()})
 
-    return jsonify({"target": target, "response": r.json()})
 
 @app.get("/")
 def home():
-    return "🔥 Mark Downloader is running!"
+    return "🔥 Video Downloader Bot Is Running!"
+
 
 if __name__ == "__main__":
     ensure_files()

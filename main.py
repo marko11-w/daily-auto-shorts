@@ -2,24 +2,22 @@ from flask import Flask, request, jsonify
 import requests
 import re
 import json
-import logging
 from pathlib import Path
 import os
 
 app = Flask(__name__)
 
 # ---------------------------------------
-# إعدادات
+# إعدادات عامة
 # ---------------------------------------
-ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
+TOKEN = "8116602303:AAHuS7IZt5jivjG68XL3AIVAasCpUcZRLic"
 PORT = int(os.getenv("PORT", "8080"))
 
 BASE = Path(".")
 USERS_FILE = BASE / "users.json"
 STATS_FILE = BASE / "stats.json"
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("downloader")
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # ---------------------------------------
 # ملفات التخزين
@@ -60,25 +58,22 @@ def inc_downloads():
 # ---------------------------------------
 # Telegram API
 # ---------------------------------------
-def tg_api(token):
-    return f"https://api.telegram.org/bot{token}"
+def tg(method, data=None):
+    url = f"https://api.telegram.org/bot{TOKEN}/{method}"
+    requests.post(url, json=data)
 
-def send_msg(token, chat_id, text):
-    requests.post(f"{tg_api(token)}/sendMessage",
-                  json={"chat_id": chat_id, "text": text})
+def send_msg(chat_id, text):
+    tg("sendMessage", {"chat_id": chat_id, "text": text})
 
-def send_video(token, chat_id, url):
-    requests.post(f"{tg_api(token)}/sendVideo",
-                  json={"chat_id": chat_id, "video": url})
+def send_video(chat_id, video_url):
+    tg("sendVideo", {"chat_id": chat_id, "video": video_url})
 
 
 # ---------------------------------------
 # استخراج الفيديو بأي طريقة
 # ---------------------------------------
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
 def og_extract(url):
-    """استخراج og:video لأي منصة."""
+    """استخراج og:video لأي منصة"""
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
         if not r.ok:
@@ -97,14 +92,14 @@ def og_extract(url):
             if m:
                 return m.group(1).replace("&amp;", "&")
 
-    except Exception as e:
-        log.error("OG Extract error: %s", e)
+    except:
+        return None
 
     return None
 
 
+# Instagram API fallback
 def insta_api(url):
-    """مصدر بديل لإنستغرام"""
     try:
         api = "https://snapinsta.io/wp-json/aio-dl/video-data/"
         r = requests.post(api, data={"url": url}, timeout=10)
@@ -116,97 +111,77 @@ def insta_api(url):
 
 
 # ---------------------------------------
-# تحديد المنصة
-# ---------------------------------------
-def detect(url):
-    u = url.lower()
-    if "instagram" in u or "ig.me" in u:
-        return "instagram"
-    if "tiktok" in u or "tt." in u:
-        return "tiktok"
-    if "facebook" in u or "fb.watch" in u:
-        return "facebook"
-    if "youtube" in u or "youtu.be" in u:
-        return "youtube"
-    if "pinterest" in u or "pin.it" in u:
-        return "pinterest"
-    if "twitter" in u or "x.com" in u:
-        return "twitter"
-    if "threads.net" in u:
-        return "threads"
-    return "other"
-
-
-# ---------------------------------------
 # Webhook
 # ---------------------------------------
-@app.post("/webhook/<token>")
-def webhook(token):
+@app.post("/webhook")
+def webhook():
     ensure_files()
     update = request.json or {}
 
     msg = update.get("message")
     if not msg:
         return "ok"
-    
+
     chat_id = msg["chat"]["id"]
     text = msg.get("text", "")
+
     add_user(chat_id)
 
-    # أمر البدء
     if text.startswith("/start"):
-        send_msg(token, chat_id,
+        send_msg(chat_id,
                  "🎬 أرسل أي رابط فيديو من:\n"
                  "Instagram / TikTok / Facebook / YouTube / Pinterest / Twitter / Threads\n"
-                 "وسأحمّله لك مباشرة 👌")
+                 "وسأقوم بتحميله لك 🔥")
         return "ok"
 
-    # استخراج رابط
     links = re.findall(r"(https?://\S+)", text)
     if not links:
         return "ok"
 
     url = links[0].rstrip(").,!?;")
 
-    platform = detect(url)
-    send_msg(token, chat_id, f"⏳ جاري المعالجة ({platform})...")
+    send_msg(chat_id, "⏳ جاري استخراج الفيديو...")
 
     # Instagram
-    if platform == "instagram":
+    if "instagram" in url or "ig.me" in url:
         vid = insta_api(url) or og_extract(url)
         if vid:
             inc_downloads()
-            send_video(token, chat_id, vid)
+            send_video(chat_id, vid)
         else:
-            send_msg(token, chat_id, "❌ فشل التحميل من Instagram")
+            send_msg(chat_id, "❌ تعذر تحميل فيديو Instagram")
         return "ok"
 
-    # All other platforms
+    # باقي المنصات
     vid = og_extract(url)
     if vid:
         inc_downloads()
-        send_video(token, chat_id, vid)
+        send_video(chat_id, vid)
     else:
-        send_msg(token, chat_id, "❌ لم أستطع استخراج الفيديو!")
+        send_msg(chat_id, "❌ لم أستطع استخراج الفيديو!")
 
     return "ok"
 
 
 # ---------------------------------------
-# ضبط Webhook
+# ضبط Webhook (نسخة Railway)
 # ---------------------------------------
-@app.get("/set/<token>")
-def set_hook(token):
-    me = request.host_url.strip("/")
-    target = f"{me}/webhook/{token}"
-    r = requests.get(f"https://api.telegram.org/bot{token}/setWebhook",
-                     params={"url": target})
-    return jsonify({"webhook": target, "telegram_reply": r.json()})
+@app.get("/set")
+def set_hook():
+    domain = "https://" + request.host
+    webhook_url = f"{domain}/webhook"
+
+    r = requests.get(
+        f"https://api.telegram.org/bot{TOKEN}/setWebhook",
+        params={"url": webhook_url}
+    )
+
+    return jsonify({"webhook": webhook_url, "telegram_reply": r.json()})
 
 
 @app.get("/")
 def home():
-    return "🔥 Video Downloader Bot Is Running!"
+    return "🔥 Video Downloader Bot Running!"
 
 
 if __name__ == "__main__":

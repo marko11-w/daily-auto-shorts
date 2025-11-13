@@ -252,7 +252,6 @@ def set_webhook(token):
 @app.get("/")
 def home():
     return "🔥 Mark Downloader is running!"
-
 if __name__ == "__main__":
     ensure_files()
     app.run(host="0.0.0.0", port=PORT)

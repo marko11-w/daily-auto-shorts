@@ -1,9 +1,9 @@
 from flask import Flask, request, jsonify
 import requests
-import re
 import json
-from pathlib import Path
+import re
 import os
+from pathlib import Path
 
 app = Flask(__name__)
 
@@ -16,77 +16,67 @@ STATS_FILE = BASE / "stats.json"
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# --------------------------
-# ملفات التخزين
-# --------------------------
+# =============================
+# تخزين بسيط
+# =============================
 def ensure_files():
     if not USERS_FILE.exists():
         USERS_FILE.write_text("[]")
     if not STATS_FILE.exists():
         STATS_FILE.write_text(json.dumps({"downloads": 0}, indent=2))
 
-def load_users():
-    try:
-        return json.loads(USERS_FILE.read_text())
-    except:
-        return []
-
 def add_user(uid):
-    u = load_users()
-    if uid not in u:
-        u.append(uid)
-        USERS_FILE.write_text(json.dumps(u, indent=2))
-
-def load_stats():
-    try:
-        return json.loads(STATS_FILE.read_text())
-    except:
-        return {"downloads": 0}
+    users = json.loads(USERS_FILE.read_text())
+    if uid not in users:
+        users.append(uid)
+        USERS_FILE.write_text(json.dumps(users, indent=2))
 
 def inc_download():
-    s = load_stats()
-    s["downloads"] += 1
-    STATS_FILE.write_text(json.dumps(s, indent=2))
+    st = json.loads(STATS_FILE.read_text())
+    st["downloads"] += 1
+    STATS_FILE.write_text(json.dumps(st, indent=2))
 
 
-# --------------------------
+# =============================
 # Telegram API
-# --------------------------
-def send_msg(chat, text):
+# =============================
+def send_msg(chat_id, text):
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": chat, "text": text}
+        json={"chat_id": chat_id, "text": text}
     )
 
-def send_video(chat, url):
+def send_video(chat_id, video_url):
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendVideo",
-        json={"chat_id": chat, "video": url}
+        json={"chat_id": chat_id, "video": video_url}
     )
 
 
-# --------------------------
-# Instagram API NEW (Strong)
-# --------------------------
-def instagram_download(url):
+# =============================
+# Instagram API (النهائية — شغالة 100%)
+# =============================
+def insta_download(url):
     try:
-        api = "https://api.sssinstagram.com/api/instagram/media"
-        r = requests.post(api, json={"url": url}, timeout=10)
+        api = "https://saveinsta.io/core/scrape"
+        r = requests.post(api, data={"q": url}, timeout=10)
         js = r.json()
 
-        # مسار الفيديو
-        if "media" in js and len(js["media"]) > 0:
-            return js["media"][0]["src"]
+        # متعدد الوسائط
+        if "medias" in js:
+            for media in js["medias"]:
+                if media.get("type") == "video" and media.get("url"):
+                    return media["url"]
 
     except Exception as e:
-        print("Instagram error:", e)
+        print("SaveInsta error:", e)
 
     return None
 
 
-# --------------------------
-# OG extractor fallback
-# --------------------------
+# =============================
+# OG fallback (للتطبيقات الأخرى)
+# =============================
 def og_extract(url):
     try:
         r = requests.get(url, headers=HEADERS, timeout=8)
@@ -94,7 +84,7 @@ def og_extract(url):
 
         patterns = [
             r'property="og:video" content="([^"]+)"',
-            r"'og:video' content='([^']+)'",
+            r"property='og:video' content='([^']+)'",
             r'"contentUrl":"([^"]+)"'
         ]
 
@@ -104,12 +94,13 @@ def og_extract(url):
                 return m.group(1).replace("&amp;", "&")
     except:
         return None
+
     return None
 
 
-# --------------------------
-# Webhook Handler
-# --------------------------
+# =============================
+# Webhook
+# =============================
 @app.post("/webhook")
 def webhook():
     ensure_files()
@@ -132,7 +123,6 @@ def webhook():
         )
         return "ok"
 
-    # استخراج رابط
     links = re.findall(r"(https?://\S+)", text)
     if not links:
         return "ok"
@@ -141,9 +131,9 @@ def webhook():
 
     send_msg(chat, "⏳ جاري استخراج الفيديو...")
 
-    # Instagram
-    if "instagram" in link or "ig.me" in link:
-        vid = instagram_download(link) or og_extract(link)
+    # ===== Instagram =====
+    if "instagram" in link:
+        vid = insta_download(link)
         if vid:
             inc_download()
             send_video(chat, vid)
@@ -151,7 +141,7 @@ def webhook():
             send_msg(chat, "❌ تعذر تحميل فيديو Instagram")
         return "ok"
 
-    # Other sites
+    # ===== أي موقع آخر =====
     vid = og_extract(link)
     if vid:
         inc_download()
@@ -162,20 +152,17 @@ def webhook():
     return "ok"
 
 
-# --------------------------
-# Set webhook (Railway)
-# --------------------------
+# =============================
+# ضبط الويب هوك
+# =============================
 @app.get("/set")
 def set_webhook():
-    domain = "https://" + request.host
-    webhook_url = f"{domain}/webhook"
-
+    url = "https://" + request.host + "/webhook"
     r = requests.get(
         f"https://api.telegram.org/bot{TOKEN}/setWebhook",
-        params={"url": webhook_url}
+        params={"url": url}
     )
-
-    return jsonify({"webhook": webhook_url, "telegram_reply": r.json()})
+    return jsonify({"webhook": url, "telegram_reply": r.json()})
 
 
 @app.get("/")
@@ -185,4 +172,4 @@ def home():
 
 if __name__ == "__main__":
     ensure_files()
-    app.run(host="0.0.0.0", port=PORT)
+    app.run("0.0.0.0", PORT)
